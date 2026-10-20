@@ -1,0 +1,390 @@
+/* 解題筆記：單頁靜態網站（hash routing，適用 GitHub Pages） */
+(() => {
+  "use strict";
+
+  const DIFFS = ["Easy", "Medium", "Hard", "Unrated"];
+  const DIFF_NAME = { Easy: "Easy", Medium: "Medium", Hard: "Hard", Unrated: "未分級" };
+  const SORTS = { num: "依題號", recent: "最近新增", diff: "依難度" };
+
+  const $main = document.getElementById("main");
+  const state = { data: null, byKey: new Map(), patterns: new Map(), cache: new Map() };
+
+  /* ---------- helpers ---------- */
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const diffClass = (d) => `d-${d.toLowerCase()}`;
+  const label = (p) => (p.num !== null ? `${p.num}. ${p.title}` : p.title);
+  const sourceName = (key) => state.data.sources.find((s) => s.key === key)?.name ?? key;
+  const githubBase = () => {
+    const g = state.data.config.github || "";
+    return g.replace(/\/$/, "");
+  };
+
+  async function getJSON(url) {
+    if (state.cache.has(url)) return state.cache.get(url);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${res.status} ${url}`);
+    const json = await res.json();
+    state.cache.set(url, json);
+    return json;
+  }
+
+  function renderMarkdown(md) {
+    if (!window.marked) return `<pre>${esc(md)}</pre>`;
+    const html = window.marked.parse(md, { gfm: true });
+    return window.DOMPurify ? window.DOMPurify.sanitize(html) : html;
+  }
+
+  /** 把筆記內的相對連結改成站內路由或 GitHub 連結，並為程式碼上色 */
+  function enhance(container, baseFolder) {
+    container.querySelectorAll("a[href]").forEach((a) => {
+      const href = a.getAttribute("href");
+      if (/^(https?:|#|mailto:)/.test(href)) {
+        if (/^https?:/.test(href)) { a.target = "_blank"; a.rel = "noopener"; }
+        return;
+      }
+      const pat = href.match(/patterns\/([\w-]+)\.md/);
+      if (pat) { a.setAttribute("href", `#/patterns/${pat[1]}`); return; }
+      const gh = githubBase();
+      if (gh && baseFolder) {
+        const url = new URL(href, `https://x/${baseFolder}/`).pathname.slice(1);
+        a.href = `${gh}/blob/main/${url}`;
+        a.target = "_blank"; a.rel = "noopener";
+      }
+    });
+    if (window.hljs) container.querySelectorAll("pre code").forEach((el) => window.hljs.highlightElement(el));
+  }
+
+  function diffPill(d) {
+    return `<span class="diff ${diffClass(d)}"><span class="dot" aria-hidden="true"></span>${DIFF_NAME[d]}</span>`;
+  }
+
+  function patternLinks(slugs) {
+    return slugs.map((s) => {
+      const pt = state.patterns.get(s);
+      return pt ? `<a class="pattern-link" href="#/patterns/${s}">${esc(pt.name)}</a>` : "";
+    }).join("");
+  }
+
+  function problemRow(p) {
+    return `
+      <a class="row" href="#/p/${p.key}">
+        <span class="row-id">${p.num !== null ? p.num : `<span class="src-tag">${esc(sourceName(p.source))}</span>`}</span>
+        <span class="row-title">
+          <span class="t">${esc(p.title)}</span>${p.star ? '<span class="star" title="精選">★</span>' : ""}
+          ${p.summary ? `<span class="row-summary">${esc(p.summary)}</span>` : ""}
+        </span>
+        <span class="row-diff">${diffPill(p.difficulty)}</span>
+        <span class="row-patterns">${p.patterns.map((s) => esc(state.patterns.get(s)?.name ?? s)).join("、")}</span>
+        <span class="row-note">${p.note ? '<span class="has-note" title="有筆記">筆記</span>' : ""}</span>
+      </a>`;
+  }
+
+  function diffBar(diff, total) {
+    if (!total) return '<span class="bar" aria-hidden="true"></span>';
+    return `<span class="bar" aria-hidden="true">${DIFFS.filter((d) => diff[d])
+      .map((d) => `<span class="${diffClass(d)}" style="flex:${diff[d]}"></span>`).join("")}</span>`;
+  }
+
+  /* ---------- pages ---------- */
+  function pageHome() {
+    const { config, problems, patterns } = state.data;
+    const count = (d) => problems.filter((p) => p.difficulty === d).length;
+    const featured = problems.filter((p) => p.star);
+    const recent = problems.filter((p) => p.date).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
+    const others = state.data.sources.filter((s) => s.key !== "leetcode")
+      .map((s) => ({ ...s, n: problems.filter((p) => p.source === s.key).length }));
+
+    return `
+      <section class="hero">
+        <h1 class="hero-title">${esc(config.title)}</h1>
+        <p class="hero-intro">${esc(config.intro)}</p>
+        <dl class="tally">
+          ${DIFFS.filter(count).map((d) => `<div class="${diffClass(d)}"><dt><span class="dot"></span>${DIFF_NAME[d]}</dt><dd>${count(d)}</dd></div>`).join("")}
+        </dl>
+        ${others.length ? `<p class="others">另收錄 ${others.map((s) => `<a href="#/problems?src=${s.key}">${esc(s.name)} ${s.n} 題</a>`).join("、")}。</p>` : ""}
+      </section>
+
+      ${featured.length ? `
+      <section class="block">
+        <div class="block-head"><h2>精選題目</h2><a href="#/problems?star=1">全部精選</a></div>
+        <div class="list">${featured.map((p) => problemRow(p)).join("")}</div>
+      </section>` : ""}
+
+      <section class="block two-col">
+        <div>
+          <div class="block-head"><h2>解題模式</h2><a href="#/patterns">全部模式</a></div>
+          <ul class="pattern-mini">
+            ${patterns.slice(0, 8).map((pt) => `
+              <li><a href="#/patterns/${pt.slug}"><span class="pm-name">${esc(pt.name)}</span><span class="pm-count">${pt.count}</span></a>${diffBar(pt.diff, pt.count)}</li>`).join("")}
+          </ul>
+        </div>
+        <div>
+          <div class="block-head"><h2>最近新增</h2><a href="#/problems?sort=recent">依時間排序</a></div>
+          <ul class="recent">
+            ${recent.map((p) => `<li><a href="#/p/${p.key}"><time>${esc(p.date)}</time><span>${esc(label(p))}</span></a></li>`).join("") || "<li class='muted'>在題目的 front matter 加上 date 欄位就會顯示在這裡。</li>"}
+          </ul>
+        </div>
+      </section>`;
+  }
+
+  function parseQuery(qs) {
+    const q = new URLSearchParams(qs);
+    return {
+      q: q.get("q") || "", src: q.get("src") || "", d: q.get("d") || "", p: q.get("p") || "",
+      star: q.get("star") === "1", note: q.get("note") === "1", sort: SORTS[q.get("sort")] ? q.get("sort") : "num",
+    };
+  }
+
+  function filterProblems(f) {
+    const words = f.q.toLowerCase().split(/\s+/).filter(Boolean);
+    let list = state.data.problems.filter((p) =>
+      (!f.src || p.source === f.src) && (!f.d || p.difficulty === f.d) &&
+      (!f.p || p.patterns.includes(f.p)) && (!f.star || p.star) && (!f.note || p.note) &&
+      words.every((w) => [p.id, p.title, p.summary, ...p.tags, ...p.patterns.map((s) => state.patterns.get(s)?.name ?? "")]
+        .join(" ").toLowerCase().includes(w)));
+    if (f.sort === "recent") list = [...list].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    if (f.sort === "diff") list = [...list].sort((a, b) => DIFFS.indexOf(a.difficulty) - DIFFS.indexOf(b.difficulty));
+    return list;
+  }
+
+  function pageProblems(qs) {
+    const f = parseQuery(qs);
+    const chips = (name, options, current) => options.map(([v, text]) =>
+      `<button type="button" class="chip" data-f="${name}" data-v="${v}" aria-pressed="${current === v}">${text}</button>`).join("");
+    const srcOpts = [["", "全部"], ...state.data.sources.map((s) => [s.key, esc(s.name)])];
+    const dOpts = [["", "全部"], ...DIFFS.filter((d) => state.data.problems.some((p) => p.difficulty === d)).map((d) => [d, DIFF_NAME[d]])];
+
+    return `
+      <h1 class="page-title">題目</h1>
+      <form class="filters" id="filters" role="search" onsubmit="return false">
+        <input class="search" id="q" type="search" placeholder="搜尋題號、題名、標籤或解題模式" value="${esc(f.q)}" autocomplete="off" aria-label="搜尋題目">
+        <div class="filter-line">
+          ${state.data.sources.length > 1 ? `<div class="chips" role="group" aria-label="來源">${chips("src", srcOpts, f.src)}</div>` : ""}
+          <div class="chips" role="group" aria-label="難度">${chips("d", dOpts, f.d)}</div>
+        </div>
+        <div class="filter-line">
+          <label class="select"><span>解題模式</span>
+            <select id="p"><option value="">全部</option>${state.data.patterns.filter((pt) => pt.count)
+              .map((pt) => `<option value="${pt.slug}"${f.p === pt.slug ? " selected" : ""}>${esc(pt.name)}（${pt.count}）</option>`).join("")}</select>
+          </label>
+          <label class="check"><input type="checkbox" id="star"${f.star ? " checked" : ""}> 只看精選</label>
+          <label class="check"><input type="checkbox" id="note"${f.note ? " checked" : ""}> 只看有筆記</label>
+          <label class="select push"><span>排序</span>
+            <select id="sort">${Object.entries(SORTS).map(([v, t]) => `<option value="${v}"${f.sort === v ? " selected" : ""}>${t}</option>`).join("")}</select>
+          </label>
+        </div>
+      </form>
+      <p class="result-count" id="count" aria-live="polite"></p>
+      <div class="list list-full" id="results"></div>`;
+  }
+
+  function bindProblems(qs) {
+    const f = parseQuery(qs);
+    const results = document.getElementById("results");
+    const countEl = document.getElementById("count");
+
+    const draw = () => {
+      const list = filterProblems(f);
+      countEl.textContent = `共 ${list.length} 題`;
+      results.innerHTML = list.length
+        ? list.map((p) => problemRow(p)).join("")
+        : `<div class="empty">沒有符合條件的題目。<button type="button" id="reset">清除所有篩選</button></div>`;
+      document.getElementById("reset")?.addEventListener("click", () => { location.hash = "#/problems"; });
+    };
+    const sync = () => {
+      const q = new URLSearchParams();
+      if (f.q) q.set("q", f.q);
+      ["src", "d", "p"].forEach((k) => f[k] && q.set(k, f[k]));
+      if (f.star) q.set("star", "1");
+      if (f.note) q.set("note", "1");
+      if (f.sort !== "num") q.set("sort", f.sort);
+      const s = q.toString();
+      history.replaceState(null, "", `#/problems${s ? "?" + s : ""}`);
+      draw();
+    };
+
+    document.getElementById("q").addEventListener("input", (e) => { f.q = e.target.value; sync(); });
+    document.querySelectorAll(".chip").forEach((b) => b.addEventListener("click", () => {
+      f[b.dataset.f] = b.dataset.v;
+      document.querySelectorAll(`.chip[data-f="${b.dataset.f}"]`).forEach((x) => x.setAttribute("aria-pressed", x === b));
+      sync();
+    }));
+    ["p", "sort"].forEach((id) => document.getElementById(id).addEventListener("change", (e) => { f[id] = e.target.value; sync(); }));
+    ["star", "note"].forEach((id) => document.getElementById(id).addEventListener("change", (e) => { f[id] = e.target.checked; sync(); }));
+    draw();
+  }
+
+  async function pageProblem(key) {
+    const p = state.byKey.get(key);
+    if (!p) return notFound("找不到這道題目，可能已被移除或網址有誤。");
+    const detail = await getJSON(`data/p/${key}.json`);
+    const all = state.data.problems;
+    const i = all.indexOf(p);
+    const prev = all[i - 1], next = all[i + 1];
+    const gh = githubBase();
+    const open = p.url ? `<a class="btn" href="${esc(p.url)}" target="_blank" rel="noopener">${p.source === "leetcode" ? "在 LeetCode 開啟" : "開啟原題"}</a>` : "";
+    const ghLink = gh ? `<a class="btn ghost" href="${gh}/tree/main/${detail.folder}" target="_blank" rel="noopener">在 GitHub 查看</a>` : "";
+    document.title = `${label(p)}｜${state.data.config.title}`;
+
+    return `
+      <a class="back" href="#/problems">返回題目列表</a>
+      <header class="p-head">
+        <div class="p-num ${diffClass(p.difficulty)}${p.num === null ? " is-text" : ""}">${p.num !== null ? p.num : esc(sourceName(p.source))}</div>
+        <div class="p-meta">
+          ${p.num !== null && p.source !== "leetcode" ? `<span class="src-tag">${esc(sourceName(p.source))}</span>` : ""}
+          <h1 class="p-title">${esc(p.title)}${p.star ? '<span class="star" title="精選">★</span>' : ""}</h1>
+          <div class="p-tags">
+            ${diffPill(p.difficulty)}
+            ${patternLinks(p.patterns)}
+            ${p.tags.filter((t) => !p.patterns.some((s) => state.patterns.get(s)?.name.toLowerCase() === t.toLowerCase()))
+              .map((t) => `<span class="tag">${esc(t)}</span>`).join("")}
+          </div>
+          ${open || ghLink ? `<div class="p-actions">${open}${ghLink}</div>` : ""}
+        </div>
+      </header>
+      <div class="p-body">
+        <article class="note prose" id="note">
+          ${p.note || detail.body ? renderMarkdown(detail.body) : ""}
+          ${!p.note ? '<p class="muted note-empty">這題還沒寫筆記。</p>' : ""}
+        </article>
+        <section class="code" aria-label="解答程式碼">
+          ${detail.solutions.length > 1 ? `<div class="tabs" role="tablist">${detail.solutions.map((s, j) =>
+            `<button type="button" role="tab" class="tab" aria-selected="${j === 0}" data-i="${j}">${esc(s.name)}</button>`).join("")}</div>` : ""}
+          ${detail.solutions.map((s, j) => `
+            <div class="code-panel" data-i="${j}"${j ? " hidden" : ""}>
+              <div class="code-bar"><span>${esc(s.lang)}${detail.solutions.length === 1 ? `　${esc(s.name)}` : ""}</span><button type="button" class="copy" data-i="${j}">複製</button></div>
+              <pre><code class="language-${s.lang === "C++" ? "cpp" : s.lang.toLowerCase()}">${esc(s.code)}</code></pre>
+            </div>`).join("")}
+        </section>
+      </div>
+      <nav class="pager" aria-label="上一題 / 下一題">
+        ${prev ? `<a href="#/p/${prev.key}" class="pg-prev"><span>上一題</span>${esc(label(prev))}</a>` : "<span></span>"}
+        ${next ? `<a href="#/p/${next.key}" class="pg-next"><span>下一題</span>${esc(label(next))}</a>` : "<span></span>"}
+      </nav>`;
+  }
+
+  function bindProblem(key) {
+    const detail = state.cache.get(`data/p/${key}.json`);
+    enhance(document.getElementById("note"), detail.folder);
+    document.querySelectorAll(".code pre code").forEach((el) => window.hljs?.highlightElement(el));
+    document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", x === t));
+      document.querySelectorAll(".code-panel").forEach((pnl) => { pnl.hidden = pnl.dataset.i !== t.dataset.i; });
+    }));
+    document.querySelectorAll(".copy").forEach((b) => b.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(detail.solutions[+b.dataset.i].code);
+        b.textContent = "已複製";
+      } catch { b.textContent = "無法複製"; }
+      setTimeout(() => { b.textContent = "複製"; }, 1600);
+    }));
+  }
+
+  function pagePatterns() {
+    return `
+      <h1 class="page-title">解題模式</h1>
+      <p class="lead">每種模式整理了適用情境與程式模板，並列出用到這個模式的題目。</p>
+      <ul class="pattern-list">
+        ${state.data.patterns.map((pt) => `
+          <li>
+            <a href="#/patterns/${pt.slug}">
+              <span class="pl-name">${esc(pt.name)}</span>
+              <span class="pl-summary">${esc(pt.summary)}</span>
+              <span class="pl-count">${pt.count} 題</span>
+            </a>
+            ${diffBar(pt.diff, pt.count)}
+          </li>`).join("")}
+      </ul>`;
+  }
+
+  async function pagePattern(slug) {
+    const pt = state.patterns.get(slug);
+    if (!pt) return notFound("找不到這個解題模式。");
+    const detail = await getJSON(`data/pattern/${slug}.json`);
+    const list = state.data.problems.filter((p) => p.patterns.includes(slug));
+    document.title = `${pt.name}｜${state.data.config.title}`;
+    const body = detail.body.replace(/^#\s.*\n/, "");
+    return `
+      <a class="back" href="#/patterns">返回解題模式</a>
+      <h1 class="page-title">${esc(pt.name)}</h1>
+      <p class="lead">${esc(pt.summary)}</p>
+      <div class="pattern-layout">
+        <article class="prose" id="pattern-body">${renderMarkdown(body)}</article>
+        <aside class="pattern-problems">
+          <h2>用到這個模式的題目（${list.length}）</h2>
+          ${list.length ? `<div class="list compact">${list.map((p) => problemRow(p)).join("")}</div>` : '<p class="muted">還沒有題目標記這個模式。</p>'}
+        </aside>
+      </div>`;
+  }
+
+  function notFound(msg) {
+    return `<div class="empty big"><h1>找不到頁面</h1><p>${esc(msg)}</p><a class="btn" href="#/">回到首頁</a></div>`;
+  }
+
+  /* ---------- router ---------- */
+  async function route() {
+    const hash = location.hash.replace(/^#/, "") || "/";
+    const [path, qs = ""] = hash.split("?");
+    const parts = path.split("/").filter(Boolean);
+    document.title = state.data.config.title;
+    document.querySelectorAll("[data-nav]").forEach((a) =>
+      a.toggleAttribute("aria-current", a.dataset.nav === (parts[0] === "p" ? "problems" : parts[0])));
+
+    let html, bind = () => {};
+    try {
+      if (!parts.length) { html = pageHome(); }
+      else if (parts[0] === "problems") { html = pageProblems(qs); bind = () => bindProblems(qs); }
+      else if (parts[0] === "p" && parts[1]) { html = await pageProblem(parts[1]); bind = () => state.byKey.has(parts[1]) && bindProblem(parts[1]); }
+      else if (parts[0] === "patterns" && parts[1]) {
+        html = await pagePattern(parts[1]);
+        bind = () => { const el = document.getElementById("pattern-body"); if (el) enhance(el, "patterns"); };
+      }
+      else if (parts[0] === "patterns") html = pagePatterns();
+      else html = notFound("這個網址沒有對應的頁面。");
+    } catch (err) {
+      console.error(err);
+      html = `<div class="empty big"><h1>載入失敗</h1><p>無法讀取資料（${esc(err.message)}）。請重新整理頁面再試一次。</p></div>`;
+    }
+    $main.innerHTML = html;
+    bind();
+    if (!qs || parts[0] !== "problems") window.scrollTo(0, 0);
+  }
+
+  /* ---------- theme ---------- */
+  function initTheme() {
+    const root = document.documentElement;
+    try { const t = localStorage.getItem("theme"); if (t) root.dataset.theme = t; } catch {}
+    document.getElementById("theme-toggle").addEventListener("click", () => {
+      const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+      root.dataset.theme = dark ? "light" : "dark";
+      try { localStorage.setItem("theme", root.dataset.theme); } catch {}
+    });
+  }
+
+  /* ---------- boot ---------- */
+  async function boot() {
+    initTheme();
+    try {
+      state.data = await getJSON("data/index.json");
+    } catch (err) {
+      $main.innerHTML = `<div class="empty big"><h1>載入失敗</h1><p>找不到 data/index.json。請先執行 <code>python scripts/build_site.py</code>，再從 _site/ 開啟網站。</p></div>`;
+      return;
+    }
+    state.data.problems.forEach((p) => state.byKey.set(p.key, p));
+    state.data.patterns.forEach((pt) => state.patterns.set(pt.slug, pt));
+
+    const { config, generated } = state.data;
+    document.getElementById("brand").textContent = config.title;
+    const gh = githubBase();
+    const ghLink = document.getElementById("github-link");
+    if (gh) ghLink.href = gh; else ghLink.remove();
+    document.getElementById("footer").innerHTML =
+      `${config.author ? `<span>${esc(config.author)}</span>` : "<span></span>"}<span>最後更新 ${esc(generated.slice(0, 10))}</span>`;
+
+    window.addEventListener("hashchange", route);
+    route();
+  }
+
+  boot();
+})();
