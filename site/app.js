@@ -29,10 +29,37 @@
     return json;
   }
 
+  /**
+   * 數學公式：$...$（行內）與 $$...$$（獨立區塊），用 KaTeX 渲染。
+   * 先把公式換成佔位字串再交給 marked，避免公式裡的 _ * \\ 被當成 Markdown 語法；
+   * 程式碼區塊與行內程式碼裡的 $ 不處理。
+   */
+  function extractMath(md) {
+    const math = [];
+    const keep = (tex, display) => `@@MATH${math.push({ tex, display }) - 1}@@`;
+    const parts = md.split(/(```[\s\S]*?```|`[^`\n]*`)/);   // 奇數位置是程式碼
+    const out = parts.map((s, i) => i % 2 ? s : s
+      .replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => keep(tex.trim(), true))
+      // 行內：$ 後不能是空白、結尾 $ 前不能是空白、後面不能接數字（避免 $5 和 $10 被誤判）
+      .replace(/(^|[^\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_, pre, tex) => pre + keep(tex, false))
+      .replace(/\\\$/g, "$"));                             // \$ 代表真正的錢字號
+    return { md: out.join(""), math };
+  }
+
+  function renderMath({ tex, display }) {
+    if (!window.katex) return esc(display ? `$$${tex}$$` : `$${tex}$`);
+    return window.katex.renderToString(tex, { displayMode: display, throwOnError: false });
+  }
+
   function renderMarkdown(md) {
     if (!window.marked) return `<pre>${esc(md)}</pre>`;
-    const html = window.marked.parse(md, { gfm: true });
-    return window.DOMPurify ? window.DOMPurify.sanitize(html) : html;
+    const { md: body, math } = extractMath(md);
+    let html = window.marked.parse(body, { gfm: true });
+    html = window.DOMPurify ? window.DOMPurify.sanitize(html) : html;
+    // KaTeX 的輸出是安全的 HTML（預設不允許 \\href 等指令），在清理之後才放回去
+    return html
+      .replace(/<p>@@MATH(\d+)@@<\/p>/g, (_, i) => renderMath(math[i]))
+      .replace(/@@MATH(\d+)@@/g, (_, i) => renderMath(math[i]));
   }
 
   /** 把筆記內的相對連結改成站內路由或 GitHub 連結，並為程式碼上色 */
