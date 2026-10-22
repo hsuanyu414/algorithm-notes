@@ -3,7 +3,6 @@ id: {{id}}
 title: {{title}}
 difficulty: {{difficulty}}
 tags: [{{tags}}]
-pattern: [{{pattern}}]
 url: {{url}}
 star: false
 summary:

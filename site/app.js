@@ -7,7 +7,7 @@
   const SORTS = { num: "依題號", recent: "最近新增", diff: "依難度" };
 
   const $main = document.getElementById("main");
-  const state = { data: null, byKey: new Map(), patterns: new Map(), cache: new Map() };
+  const state = { data: null, byKey: new Map(), tags: new Map(), cache: new Map() };
 
   /* ---------- helpers ---------- */
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -70,8 +70,8 @@
         if (/^https?:/.test(href)) { a.target = "_blank"; a.rel = "noopener"; }
         return;
       }
-      const pat = href.match(/patterns\/([\w-]+)\.md/);
-      if (pat) { a.setAttribute("href", `#/patterns/${pat[1]}`); return; }
+      const tag = href.match(/(?:tags|patterns)\/([^/]+)\.md$/);
+      if (tag) { a.setAttribute("href", tagHref(decodeURIComponent(tag[1]))); return; }
       const gh = githubBase();
       if (gh && baseFolder) {
         const url = new URL(href, `https://x/${baseFolder}/`).pathname.slice(1);
@@ -86,25 +86,25 @@
     return `<span class="diff ${diffClass(d)}"><span class="dot" aria-hidden="true"></span>${DIFF_NAME[d]}</span>`;
   }
 
-  function patternLinks(slugs) {
-    return slugs.map((s) => {
-      const pt = state.patterns.get(s);
-      return pt ? `<a class="pattern-link" href="#/patterns/${s}">${esc(pt.name)}</a>` : "";
-    }).join("");
+  const tagHref = (slug) => `#/tags/${encodeURIComponent(slug)}`;
+  const tagName = (slug) => state.tags.get(slug)?.name ?? slug;
+
+  function tagLinks(slugs) {
+    return slugs.map((s) => `<a class="tag-link" href="${tagHref(s)}">${esc(tagName(s))}</a>`).join("");
   }
 
   function problemRow(p) {
     return `
-      <a class="row" href="#/p/${p.key}">
+      <div class="row">
         <span class="row-id">${p.num !== null ? p.num : `<span class="src-tag">${esc(sourceName(p.source))}</span>`}</span>
         <span class="row-title">
-          <span class="t">${esc(p.title)}</span>${p.star ? '<span class="star" title="精選">★</span>' : ""}
+          <a class="t row-link" href="#/p/${p.key}">${esc(p.title)}</a>${p.star ? '<span class="star" title="精選">★</span>' : ""}
           ${p.summary ? `<span class="row-summary">${esc(p.summary)}</span>` : ""}
         </span>
         <span class="row-diff">${diffPill(p.difficulty)}</span>
-        <span class="row-patterns">${p.patterns.map((s) => esc(state.patterns.get(s)?.name ?? s)).join("、")}</span>
+        <span class="row-tags">${p.tags.map((s) => `<a href="${tagHref(s)}">${esc(tagName(s))}</a>`).join("、")}</span>
         <span class="row-note">${p.note ? '<span class="has-note" title="有筆記">筆記</span>' : ""}</span>
-      </a>`;
+      </div>`;
   }
 
   function diffBar(diff, total) {
@@ -115,7 +115,7 @@
 
   /* ---------- pages ---------- */
   function pageHome() {
-    const { config, problems, patterns } = state.data;
+    const { config, problems, tags } = state.data;
     const count = (d) => problems.filter((p) => p.difficulty === d).length;
     const featured = problems.filter((p) => p.star);
     const recent = problems.filter((p) => p.date).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
@@ -140,10 +140,11 @@
 
       <section class="block two-col">
         <div>
-          <div class="block-head"><h2>解題模式</h2><a href="#/patterns">全部模式</a></div>
-          <ul class="pattern-mini">
-            ${patterns.slice(0, 8).map((pt) => `
-              <li><a href="#/patterns/${pt.slug}"><span class="pm-name">${esc(pt.name)}</span><span class="pm-count">${pt.count}</span></a>${diffBar(pt.diff, pt.count)}</li>`).join("")}
+          <div class="block-head"><h2>標籤</h2><a href="#/tags">全部標籤</a></div>
+          <ul class="tag-mini">
+            ${tags.filter((t) => t.count).slice(0, 8).map((t) => `
+              <li><a href="${tagHref(t.slug)}"><span class="pm-name">${esc(t.name)}</span><span class="pm-count">${t.count}</span></a>${diffBar(t.diff, t.count)}</li>`).join("")
+              || "<li class='muted'>在題目的 front matter 加上 tags 就會顯示在這裡。</li>"}
           </ul>
         </div>
         <div>
@@ -158,7 +159,7 @@
   function parseQuery(qs) {
     const q = new URLSearchParams(qs);
     return {
-      q: q.get("q") || "", src: q.get("src") || "", d: q.get("d") || "", p: q.get("p") || "",
+      q: q.get("q") || "", src: q.get("src") || "", d: q.get("d") || "", t: q.get("t") || "",
       star: q.get("star") === "1", note: q.get("note") === "1", sort: SORTS[q.get("sort")] ? q.get("sort") : "num",
     };
   }
@@ -167,8 +168,8 @@
     const words = f.q.toLowerCase().split(/\s+/).filter(Boolean);
     let list = state.data.problems.filter((p) =>
       (!f.src || p.source === f.src) && (!f.d || p.difficulty === f.d) &&
-      (!f.p || p.patterns.includes(f.p)) && (!f.star || p.star) && (!f.note || p.note) &&
-      words.every((w) => [p.id, p.title, p.summary, ...p.tags, ...p.patterns.map((s) => state.patterns.get(s)?.name ?? "")]
+      (!f.t || p.tags.includes(f.t)) && (!f.star || p.star) && (!f.note || p.note) &&
+      words.every((w) => [p.id, p.title, p.summary, ...p.tags.flatMap((s) => [tagName(s), ...(state.tags.get(s)?.aliases ?? [])])]
         .join(" ").toLowerCase().includes(w)));
     if (f.sort === "recent") list = [...list].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
     if (f.sort === "diff") list = [...list].sort((a, b) => DIFFS.indexOf(a.difficulty) - DIFFS.indexOf(b.difficulty));
@@ -185,15 +186,16 @@
     return `
       <h1 class="page-title">題目</h1>
       <form class="filters" id="filters" role="search" onsubmit="return false">
-        <input class="search" id="q" type="search" placeholder="搜尋題號、題名、標籤或解題模式" value="${esc(f.q)}" autocomplete="off" aria-label="搜尋題目">
+        <input class="search" id="q" type="search" placeholder="搜尋題號、題名或標籤" value="${esc(f.q)}" autocomplete="off" aria-label="搜尋題目">
         <div class="filter-line">
           ${state.data.sources.length > 1 ? `<div class="chips" role="group" aria-label="來源">${chips("src", srcOpts, f.src)}</div>` : ""}
           <div class="chips" role="group" aria-label="難度">${chips("d", dOpts, f.d)}</div>
         </div>
         <div class="filter-line">
-          <label class="select"><span>解題模式</span>
-            <select id="p"><option value="">全部</option>${state.data.patterns.filter((pt) => pt.count)
-              .map((pt) => `<option value="${pt.slug}"${f.p === pt.slug ? " selected" : ""}>${esc(pt.name)}（${pt.count}）</option>`).join("")}</select>
+          <label class="select"><span>標籤</span>
+            <select id="t"><option value="">全部</option>${[...state.data.tags].filter((t) => t.count)
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((t) => `<option value="${esc(t.slug)}"${f.t === t.slug ? " selected" : ""}>${esc(t.name)}（${t.count}）</option>`).join("")}</select>
           </label>
           <label class="check"><input type="checkbox" id="star"${f.star ? " checked" : ""}> 只看精選</label>
           <label class="check"><input type="checkbox" id="note"${f.note ? " checked" : ""}> 只看有筆記</label>
@@ -222,7 +224,7 @@
     const sync = () => {
       const q = new URLSearchParams();
       if (f.q) q.set("q", f.q);
-      ["src", "d", "p"].forEach((k) => f[k] && q.set(k, f[k]));
+      ["src", "d", "t"].forEach((k) => f[k] && q.set(k, f[k]));
       if (f.star) q.set("star", "1");
       if (f.note) q.set("note", "1");
       if (f.sort !== "num") q.set("sort", f.sort);
@@ -237,7 +239,7 @@
       document.querySelectorAll(`.chip[data-f="${b.dataset.f}"]`).forEach((x) => x.setAttribute("aria-pressed", x === b));
       sync();
     }));
-    ["p", "sort"].forEach((id) => document.getElementById(id).addEventListener("change", (e) => { f[id] = e.target.value; sync(); }));
+    ["t", "sort"].forEach((id) => document.getElementById(id).addEventListener("change", (e) => { f[id] = e.target.value; sync(); }));
     ["star", "note"].forEach((id) => document.getElementById(id).addEventListener("change", (e) => { f[id] = e.target.checked; sync(); }));
     draw();
   }
@@ -263,9 +265,7 @@
           <h1 class="p-title">${esc(p.title)}${p.star ? '<span class="star" title="精選">★</span>' : ""}</h1>
           <div class="p-tags">
             ${diffPill(p.difficulty)}
-            ${patternLinks(p.patterns)}
-            ${p.tags.filter((t) => !p.patterns.some((s) => state.patterns.get(s)?.name.toLowerCase() === t.toLowerCase()))
-              .map((t) => `<span class="tag">${esc(t)}</span>`).join("")}
+            ${tagLinks(p.tags)}
           </div>
           ${open || ghLink ? `<div class="p-actions">${open}${ghLink}</div>` : ""}
         </div>
@@ -308,41 +308,52 @@
     }));
   }
 
-  function pagePatterns() {
+  function pageTags() {
+    const all = state.data.tags;
     return `
-      <h1 class="page-title">解題模式</h1>
-      <p class="lead">每種模式整理了適用情境與程式模板，並列出用到這個模式的題目。</p>
-      <ul class="pattern-list">
-        ${state.data.patterns.map((pt) => `
+      <h1 class="page-title">標籤</h1>
+      <p class="lead">每個標籤都會列出有這個標籤的題目；有整理說明的標籤另外附上適用情境與程式模板。</p>
+      ${all.length ? `<ul class="tag-list">
+        ${all.map((t) => `
           <li>
-            <a href="#/patterns/${pt.slug}">
-              <span class="pl-name">${esc(pt.name)}</span>
-              <span class="pl-summary">${esc(pt.summary)}</span>
-              <span class="pl-count">${pt.count} 題</span>
+            <a href="${tagHref(t.slug)}">
+              <span class="pl-name">${esc(t.name)}${t.body ? '<span class="has-note" title="有說明與模板">說明</span>' : ""}</span>
+              <span class="pl-summary">${esc(t.summary)}</span>
+              <span class="pl-count">${t.count} 題</span>
             </a>
-            ${diffBar(pt.diff, pt.count)}
+            ${diffBar(t.diff, t.count)}
           </li>`).join("")}
-      </ul>`;
+      </ul>` : '<p class="muted">還沒有任何標籤。</p>'}`;
   }
 
-  async function pagePattern(slug) {
-    const pt = state.patterns.get(slug);
-    if (!pt) return notFound("找不到這個解題模式。");
-    const detail = await getJSON(`data/pattern/${slug}.json`);
-    const list = state.data.problems.filter((p) => p.patterns.includes(slug));
-    document.title = `${pt.name}｜${state.data.config.title}`;
-    const body = detail.body.replace(/^#\s.*\n/, "");
+  /** slug 找不到時，再用名稱 / 別名找（例如舊網址 #/patterns/hash-map） */
+  function findTag(key) {
+    if (state.tags.has(key)) return state.tags.get(key);
+    const k = key.toLowerCase().replace(/[-_]+/g, " ");
+    return state.data.tags.find((t) => [t.slug, t.name, ...t.aliases]
+      .some((n) => n.toLowerCase().replace(/[-_]+/g, " ") === k));
+  }
+
+  async function pageTag(key) {
+    const t = findTag(key);
+    if (!t) return notFound("找不到這個標籤。");
+    if (t.slug !== key) { history.replaceState(null, "", tagHref(t.slug)); }
+    const slug = t.slug;
+    const body = t.body ? (await getJSON(`data/tag/${encodeURIComponent(slug)}.json`)).body.replace(/^#\s.*\n/, "") : "";
+    const list = state.data.problems.filter((p) => p.tags.includes(slug));
+    document.title = `${t.name}｜${state.data.config.title}`;
+    const problems = `
+      <h2>有這個標籤的題目（${list.length}）</h2>
+      ${list.length ? `<div class="list${body ? " compact" : ""}">${list.map((p) => problemRow(p)).join("")}</div>` : '<p class="muted">還沒有題目使用這個標籤。</p>'}`;
     return `
-      <a class="back" href="#/patterns">返回解題模式</a>
-      <h1 class="page-title">${esc(pt.name)}</h1>
-      <p class="lead">${esc(pt.summary)}</p>
-      <div class="pattern-layout">
-        <article class="prose" id="pattern-body">${renderMarkdown(body)}</article>
-        <aside class="pattern-problems">
-          <h2>用到這個模式的題目（${list.length}）</h2>
-          ${list.length ? `<div class="list compact">${list.map((p) => problemRow(p)).join("")}</div>` : '<p class="muted">還沒有題目標記這個模式。</p>'}
-        </aside>
-      </div>`;
+      <a class="back" href="#/tags">返回標籤</a>
+      <h1 class="page-title">${esc(t.name)}</h1>
+      ${t.summary ? `<p class="lead">${esc(t.summary)}</p>` : ""}
+      ${body ? `
+      <div class="tag-layout">
+        <article class="prose" id="tag-body">${renderMarkdown(body)}</article>
+        <aside class="tag-problems">${problems}</aside>
+      </div>` : `<section class="tag-problems solo">${problems}</section>`}`;
   }
 
   function notFound(msg) {
@@ -363,11 +374,12 @@
       if (!parts.length) { html = pageHome(); }
       else if (parts[0] === "problems") { html = pageProblems(qs); bind = () => bindProblems(qs); }
       else if (parts[0] === "p" && parts[1]) { html = await pageProblem(parts[1]); bind = () => state.byKey.has(parts[1]) && bindProblem(parts[1]); }
-      else if (parts[0] === "patterns" && parts[1]) {
-        html = await pagePattern(parts[1]);
-        bind = () => { const el = document.getElementById("pattern-body"); if (el) enhance(el, "patterns"); };
+      else if (parts[0] === "patterns") { location.replace(`#/tags${parts[1] ? "/" + parts[1] : ""}`); return; }  // 舊網址
+      else if (parts[0] === "tags" && parts[1]) {
+        html = await pageTag(decodeURIComponent(parts[1]));
+        bind = () => { const el = document.getElementById("tag-body"); if (el) enhance(el, "tags"); };
       }
-      else if (parts[0] === "patterns") html = pagePatterns();
+      else if (parts[0] === "tags") html = pageTags();
       else html = notFound("這個網址沒有對應的頁面。");
     } catch (err) {
       console.error(err);
@@ -399,7 +411,7 @@
       return;
     }
     state.data.problems.forEach((p) => state.byKey.set(p.key, p));
-    state.data.patterns.forEach((pt) => state.patterns.set(pt.slug, pt));
+    state.data.tags.forEach((t) => state.tags.set(t.slug, t));
 
     const { config, generated } = state.data;
     document.getElementById("brand").textContent = config.title;

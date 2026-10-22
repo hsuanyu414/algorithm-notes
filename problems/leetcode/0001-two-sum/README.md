@@ -3,7 +3,6 @@ id: 1
 title: Two Sum
 difficulty: Easy
 tags: [Array, Hash Table]
-pattern: [Hash Map]
 url: https://leetcode.com/problems/two-sum/
 star: false
 summary: 一次遍歷，用 hash map 記錄「還需要的數字」

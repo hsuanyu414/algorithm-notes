@@ -1,10 +1,10 @@
 ---
-name: Hash Map
-aliases: [hash map, hash table, 雜湊表, unordered_map]
+name: Hash Table
+aliases: [Hash Map, HashMap, 雜湊表, unordered_map]
 summary: 用空間換時間，O(1) 查詢「看過什麼」
 ---
 
-# Hash Map
+# Hash Table
 
 ## 什麼時候用
 

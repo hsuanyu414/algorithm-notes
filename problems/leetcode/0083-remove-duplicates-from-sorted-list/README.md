@@ -3,7 +3,6 @@ id: 83
 title: Remove Duplicates from Sorted List
 difficulty: Easy
 tags: [Linked List]
-pattern: []
 url: https://leetcode.com/problems/remove-duplicates-from-sorted-list/
 star: false
 summary:

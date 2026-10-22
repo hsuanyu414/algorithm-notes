@@ -3,17 +3,15 @@
 建立新題目的資料夾與樣板。
 
 用法：
-    python scripts/new_problem.py [--source SRC] [--pattern NAME] [--lang LANG] <id> "<title>" <difficulty> ["<tag1,tag2>"]
+    python scripts/new_problem.py [--source SRC] [--lang LANG] <id> "<title>" <difficulty> ["<tag1,tag2>"]
 
     --source   題目來源資料夾，預設 leetcode（例如 interview、codeforces、misc）
-    --pattern  解題模式，需對應 patterns/ 內的 name 或 aliases，可用逗號分隔多個
     --lang     解答語言，cpp 或 c，預設 cpp
     difficulty Easy / Medium / Hard / Unrated
 
 範例：
     python scripts/new_problem.py 1 "Two Sum" Easy "Array,Hash Table"
     python scripts/new_problem.py --lang c 1 "Two Sum" Easy "Array,Hash Table"
-    python scripts/new_problem.py 1 "Two Sum" Easy "Array,Hash Table" --pattern "Hash Map"
     python scripts/new_problem.py --source interview lru-ttl "LRU Cache with TTL" Medium "Design"
 """
 from __future__ import annotations
@@ -23,7 +21,7 @@ import datetime as dt
 import re
 import sys
 
-from problems import DIFFICULTIES, ROOT, load_patterns, pattern_lookup
+from problems import DIFFICULTIES, ROOT, load_problems, tag_slug
 
 TEMPLATE_DIR = ROOT / "templates"
 
@@ -39,7 +37,6 @@ def main() -> int:
     ap.add_argument("difficulty")
     ap.add_argument("tags", nargs="?", default="")
     ap.add_argument("--source", default="leetcode")
-    ap.add_argument("--pattern", default="")
     ap.add_argument("--lang", default="cpp", choices=["cpp", "c"])
     args = ap.parse_args()
 
@@ -47,14 +44,6 @@ def main() -> int:
     if difficulty not in DIFFICULTIES:
         print(f"difficulty 必須是 {' / '.join(DIFFICULTIES)}")
         return 1
-
-    patterns = [p.strip() for p in args.pattern.split(",") if p.strip()]
-    if patterns:
-        lookup = pattern_lookup(load_patterns()[0])
-        unknown = [p for p in patterns if p.lower() not in lookup]
-        if unknown:
-            print(f"未知的 pattern：{', '.join(unknown)}（請先在 patterns/ 新增，或加入 aliases）")
-            return 1
 
     source = args.source.lower()
     slug = slugify(args.title)
@@ -75,13 +64,21 @@ def main() -> int:
     target.mkdir(parents=True)
 
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
+    # 提醒：新的標籤，或跟現有標籤只差在大小寫 / 寫法
+    _, known, _ = load_problems()
+    lookup = {n.strip().lower(): t for t in known.values() for n in [t.slug, t.name, *t.aliases]}
+    for name in tags:
+        t = lookup.get(name.lower()) or known.get(tag_slug(name))
+        if t is None:
+            print(f"新標籤：{name}")
+        elif t.name != name and name.lower() not in (a.lower() for a in t.aliases):
+            print(f"提醒：「{name}」會歸到現有標籤「{t.name}」")
     values = {
         "{{id}}": args.id if not args.id.isdigit() else str(int(args.id)),
         "{{title}}": args.title,
         "{{url}}": url,
         "{{difficulty}}": difficulty,
         "{{tags}}": ", ".join(tags),
-        "{{pattern}}": ", ".join(patterns),
         "{{date}}": dt.date.today().isoformat(),
         "{{heading}}": f"{int(args.id)}. {args.title}" if source == "leetcode" else args.title,
     }

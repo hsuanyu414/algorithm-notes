@@ -1,10 +1,10 @@
 """
-共用的題目 / 解題模式載入模組，給 gen_readme.py 與 build_site.py 使用。
+共用的題目 / 標籤載入模組，給 build_site.py 與 new_problem.py 使用。
 
 資料夾結構：
     problems/<source>/<folder>/README.md   front matter + 筆記
     problems/<source>/<folder>/solution*.cpp
-    patterns/<slug>.md                     front matter + 模板說明
+    tags/<slug>.md                         （選填）某個標籤的說明、模板與別名
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PROBLEMS_DIR = ROOT / "problems"
-PATTERNS_DIR = ROOT / "patterns"
+TAGS_DIR = ROOT / "tags"
 
 DIFFICULTIES = ["Easy", "Medium", "Hard", "Unrated"]
 
@@ -34,12 +34,13 @@ LANG_EXT = {
 
 # ---------------------------------------------------------------- models
 @dataclass
-class Pattern:
+class Tag:
     slug: str
     name: str
-    summary: str
-    aliases: list[str]
-    body: str
+    summary: str = ""
+    aliases: list[str] = field(default_factory=list)
+    body: str = ""                  # tags/<slug>.md 的內容；沒有說明檔就是空字串
+    has_file: bool = False
 
 
 @dataclass
@@ -49,8 +50,7 @@ class Problem:
     title: str
     difficulty: str
     folder: str                     # 相對 ROOT 的路徑
-    tags: list[str] = field(default_factory=list)
-    patterns: list[str] = field(default_factory=list)   # pattern slugs
+    tags: list[str] = field(default_factory=list)       # tag slugs
     url: str = ""
     star: bool = False
     summary: str = ""
@@ -118,43 +118,76 @@ def detect_note(body: str) -> bool:
 
 
 # ---------------------------------------------------------------- loaders
-def load_patterns() -> tuple[dict[str, Pattern], list[str]]:
-    patterns, errors = {}, []
-    if not PATTERNS_DIR.exists():
-        return patterns, errors
-    for f in sorted(PATTERNS_DIR.glob("*.md")):
+def tag_slug(name: str) -> str:
+    """標籤名稱 → 網址用的 slug：Hash Table → hash-table、C++ → cpp；中文保留原字。"""
+    s = name.strip().lower().replace("+", "p")
+    return re.sub(r"[^\w]+", "-", s).strip("-_") or "tag"
+
+
+def load_tag_files() -> tuple[dict[str, Tag], list[str]]:
+    """讀取 tags/*.md（選填的標籤說明檔），檔名就是 slug。"""
+    tags, errors = {}, []
+    if not TAGS_DIR.exists():
+        return tags, errors
+    for f in sorted(TAGS_DIR.glob("*.md")):
         meta, body = parse_front_matter(f.read_text(encoding="utf-8"))
         if not meta or not meta.get("name"):
             errors.append(f"{f.relative_to(ROOT)}: 缺少 front matter 的 name 欄位")
             continue
-        patterns[f.stem] = Pattern(
+        tags[f.stem] = Tag(
             slug=f.stem,
             name=meta["name"],
             summary=meta.get("summary", ""),
             aliases=as_list(meta.get("aliases")),
             body=clean_body(body),
+            has_file=True,
         )
-    return patterns, errors
+    return tags, errors
 
 
-def pattern_lookup(patterns: dict[str, Pattern]) -> dict[str, str]:
-    """名稱 / 別名 / slug（不分大小寫）→ slug"""
-    table = {}
-    for p in patterns.values():
-        for name in [p.slug, p.name, *p.aliases]:
-            table[name.strip().lower()] = p.slug
-    return table
+class TagRegistry:
+    """把題目裡寫的標籤統一成 slug。
+
+    - 對得上 tags/*.md 的 name / aliases / 檔名（不分大小寫）→ 用那個檔案
+    - 對不上 → 自動建立一個沒有說明的標籤；只差在大小寫、空白或連字號的寫法會合併成同一個
+    """
+
+    def __init__(self, files: dict[str, Tag]):
+        self.tags: dict[str, Tag] = dict(files)
+        self.errors: list[str] = []
+        self.lookup: dict[str, str] = {}
+        for t in files.values():
+            for name in [t.slug, t.name, *t.aliases]:
+                key = name.strip().lower()
+                other = self.lookup.get(key)
+                if other and other != t.slug:
+                    self.errors.append(f"tags/: 「{name}」同時出現在 {other}.md 與 {t.slug}.md")
+                    continue
+                self.lookup[key] = t.slug
+
+    def resolve(self, name: str, where: str) -> str:
+        key = name.strip().lower()
+        if key in self.lookup:
+            return self.lookup[key]
+        slug = tag_slug(name)
+        if slug in self.tags:
+            existing = self.tags[slug].name
+            if existing != name.strip():
+                self.errors.append(f"{where}: 標籤「{name}」與「{existing}」視為同一個，建議統一寫法")
+        else:
+            self.tags[slug] = Tag(slug=slug, name=name.strip())
+        return slug
 
 
-def load_problems(patterns: dict[str, Pattern] | None = None) -> tuple[list[Problem], list[str]]:
-    if patterns is None:
-        patterns, _ = load_patterns()
-    lookup = pattern_lookup(patterns)
+def load_problems() -> tuple[list[Problem], dict[str, Tag], list[str]]:
+    """回傳（題目、所有用到或有說明檔的標籤、警告訊息）。"""
+    files, file_errors = load_tag_files()
+    registry = TagRegistry(files)
     problems, errors = [], []
     seen: set[str] = set()
 
     if not PROBLEMS_DIR.exists():
-        return problems, errors
+        return problems, registry.tags, file_errors + registry.errors
 
     for src_dir in sorted(p for p in PROBLEMS_DIR.iterdir() if p.is_dir()):
         source = src_dir.name
@@ -182,12 +215,14 @@ def load_problems(patterns: dict[str, Pattern] | None = None) -> tuple[list[Prob
                 errors.append(f"{where}: LeetCode 題目的 id 必須是數字")
                 continue
 
+            names = as_list(meta.get("tags"))
+            if meta.get("pattern"):     # 舊格式：pattern 欄位已併入 tags
+                errors.append(f"{where}: pattern 欄位已併入 tags，請把內容移到 tags")
+                names += as_list(meta.get("pattern"))
             slugs = []
-            for name in as_list(meta.get("pattern")):
-                slug = lookup.get(name.strip().lower())
-                if slug is None:
-                    errors.append(f"{where}: 未知的 pattern「{name}」（請在 patterns/ 新增或加入 aliases）")
-                elif slug not in slugs:
+            for name in names:
+                slug = registry.resolve(name, where)
+                if slug not in slugs:
                     slugs.append(slug)
 
             body = clean_body(body)
@@ -197,8 +232,7 @@ def load_problems(patterns: dict[str, Pattern] | None = None) -> tuple[list[Prob
                 title=meta["title"],
                 difficulty=meta["difficulty"],
                 folder=d.relative_to(ROOT).as_posix(),
-                tags=as_list(meta.get("tags")),
-                patterns=slugs,
+                tags=slugs,
                 url=meta.get("url", ""),
                 star=bool(meta.get("star")),
                 summary=meta.get("summary", ""),
@@ -227,4 +261,4 @@ def load_problems(patterns: dict[str, Pattern] | None = None) -> tuple[list[Prob
         p.num if p.num is not None else 10**9,
         p.id,
     ))
-    return problems, errors
+    return problems, registry.tags, file_errors + registry.errors + errors

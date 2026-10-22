@@ -5,7 +5,7 @@
     site/                前端（index.html、app.js、style.css、vendor/）→ 原樣複製
     _site/data/index.json             全部題目的 metadata（列表頁、篩選用）
     _site/data/p/<key>.json           單題的筆記與解答程式碼（點進去才載入）
-    _site/data/pattern/<slug>.json    解題模式的模板說明
+    _site/data/tag/<slug>.json        標籤說明（只有 tags/<slug>.md 有內容的標籤才會產生）
 
 用法：
     python scripts/build_site.py
@@ -22,7 +22,7 @@ import subprocess
 import sys
 from collections import Counter
 
-from problems import ROOT, SOURCES, load_patterns, load_problems
+from problems import ROOT, SOURCES, load_problems
 
 SITE_SRC = ROOT / "site"
 OUT = ROOT / "_site"
@@ -56,9 +56,8 @@ def main() -> int:
     config = json.loads((ROOT / "site.json").read_text(encoding="utf-8"))
     # site.json 有手動填 github 就用它，否則自動偵測
     config["github"] = config.get("github") or detect_github()
-    patterns, perr = load_patterns()
-    problems, errors = load_problems(patterns)
-    for e in perr + errors:
+    problems, tags, errors = load_problems()
+    for e in errors:
         print(f"[warn] {e}", file=sys.stderr)
 
     if OUT.exists():
@@ -66,27 +65,27 @@ def main() -> int:
     shutil.copytree(SITE_SRC, OUT)
     (OUT / ".nojekyll").touch()   # 讓 GitHub Pages 不經過 Jekyll 處理
 
-    pattern_count = Counter(s for p in problems for s in p.patterns)
-    pattern_diff: dict[str, Counter] = {s: Counter() for s in patterns}
+    tag_count = Counter(s for p in problems for s in p.tags)
+    tag_diff: dict[str, Counter] = {s: Counter() for s in tags}
     for p in problems:
-        for s in p.patterns:
-            pattern_diff[s][p.difficulty] += 1
+        for s in p.tags:
+            tag_diff[s][p.difficulty] += 1
 
     used_sources = [s for s in dict.fromkeys(p.source for p in problems)]
     index = {
         "config": config,
         "generated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "sources": [{"key": s, "name": SOURCES.get(s, s)} for s in used_sources],
-        "patterns": [
-            {"slug": pt.slug, "name": pt.name, "summary": pt.summary,
-             "count": pattern_count[pt.slug], "diff": dict(pattern_diff[pt.slug])}
-            for pt in sorted(patterns.values(), key=lambda x: (-pattern_count[x.slug], x.name))
+        "tags": [
+            {"slug": t.slug, "name": t.name, "summary": t.summary, "aliases": t.aliases,
+             "body": bool(t.body), "count": tag_count[t.slug], "diff": dict(tag_diff[t.slug])}
+            for t in sorted(tags.values(), key=lambda x: (-tag_count[x.slug], x.name.lower()))
         ],
         "problems": [
             {
                 "key": p.key, "source": p.source, "id": p.id, "num": p.num,
                 "title": p.title, "difficulty": p.difficulty, "tags": p.tags,
-                "patterns": p.patterns, "url": p.url, "star": p.star,
+                "url": p.url, "star": p.star,
                 "summary": p.summary, "date": p.date, "note": p.has_note,
             }
             for p in problems
@@ -104,10 +103,12 @@ def main() -> int:
             ],
         })
 
-    for pt in patterns.values():
-        write_json(OUT / "data" / "pattern" / f"{pt.slug}.json", {"body": pt.body})
+    for t in tags.values():
+        if t.body:
+            write_json(OUT / "data" / "tag" / f"{t.slug}.json", {"body": t.body})
 
-    print(f"網站已產生於 {OUT.relative_to(ROOT)}/（{len(problems)} 題、{len(patterns)} 種解題模式）")
+    with_body = sum(1 for t in tags.values() if t.body)
+    print(f"網站已產生於 {OUT.relative_to(ROOT)}/（{len(problems)} 題、{len(tags)} 個標籤，其中 {with_body} 個有說明）")
     return 0
 
 

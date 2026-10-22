@@ -3,7 +3,6 @@ id: 204
 title: Count Primes
 difficulty: Medium
 tags: [Array, Math]
-pattern: []
 url: https://leetcode.com/problems/count-primes/
 star: false
 summary:
