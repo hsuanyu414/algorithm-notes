@@ -52,7 +52,12 @@ body {
 a { color: var(--link); text-decoration-thickness: 1px; text-underline-offset: 3px; }
 :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; border-radius: 3px; }
 h1, h2, h3 { line-height: 1.25; margin: 0; font-weight: 700; letter-spacing: -0.01em; }
-code { font-family: var(--mono); font-size: 0.9em; }
+code {
+  font-family: var(--mono); font-size: 0.9em;
+  /* disable ligatures to prevent issues with operators like >=, ==, >>= */ 
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
 .muted { color: var(--muted); }
 .wrap { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 16px; }
 @media (min-width: 720px) { .wrap { padding: 0 32px; } }
