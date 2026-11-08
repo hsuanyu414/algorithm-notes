@@ -59,7 +59,7 @@ code {
   font-feature-settings: "liga" 0, "calt" 0;
 }
 .muted { color: var(--muted); }
-.wrap { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+.wrap { width: 100%; max-width: 1440px; margin: 0 auto; padding: 0 16px; }
 @media (min-width: 720px) { .wrap { padding: 0 32px; } }
 
 .skip { position: absolute; left: -999px; top: 8px; background: var(--surface); padding: 8px 12px; z-index: 10; }
@@ -228,6 +228,7 @@ main.wrap { padding-top: 48px; padding-bottom: 96px; min-height: 70vh; outline: 
 }
 
 .prose { max-width: 40em; }
+.p-body .prose { max-width: none; }
 .prose > :first-child { margin-top: 0; }
 .prose h2 { font-size: 18px; margin: 28px 0 8px; }
 .prose h3 { font-size: 16px; margin: 22px 0 6px; }
